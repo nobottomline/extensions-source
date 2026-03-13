@@ -101,18 +101,69 @@ class Mangamob : ParsedHttpSource() {
     }
 
     override fun latestUpdatesParse(response: Response): MangasPage {
-        val document = response.asJsoup()
-        val mangas = document.select(latestUpdatesSelector())
-            .map(::latestUpdatesFromElement)
-            .filterNot { it.title.isBlank() || it.url.isBlank() }
-
         val isFirstPage = response.request.url.queryParameter("results").isNullOrBlank()
-        val filteredMangas = if (isFirstPage) mangas.drop(BROKEN_LATEST_SKIP_COUNT) else mangas
-
-        val hasNextPage = document.select(latestUpdatesNextPageSelector()).isNotEmpty()
-
-        return MangasPage(filteredMangas, hasNextPage)
+        return parseBrowseMangaPage(
+            response = response,
+            selector = latestUpdatesSelector(),
+            apply404CheckForMissingPreview = isFirstPage,
+        )
     }
+
+    override fun searchMangaParse(response: Response): MangasPage {
+        val isFirstPage = response.request.url.queryParameter("results").isNullOrBlank()
+        val isUpdatedFilter = response.request.url.queryParameter("filter")
+            ?.equals(LATEST_FILTER, ignoreCase = true) == true
+        return parseBrowseMangaPage(
+            response = response,
+            selector = searchMangaSelector(),
+            apply404CheckForMissingPreview = isFirstPage && isUpdatedFilter,
+        )
+    }
+
+    private fun parseBrowseMangaPage(
+        response: Response,
+        selector: String,
+        apply404CheckForMissingPreview: Boolean,
+    ): MangasPage {
+        val document = response.asJsoup()
+        val browseItems = document.select(selector)
+        val parsedItems = browseItems.mapNotNull { element ->
+            val manga = searchMangaFromElement(element)
+            if (manga.title.isBlank() || manga.url.isBlank()) null else element to manga
+        }
+        val rawMangas = parsedItems.map { it.second }
+
+        val filteredMangas = if (apply404CheckForMissingPreview) {
+            parsedItems.mapNotNull { (element, manga) ->
+                val hasChapterPreview = element.selectFirst(".fd-list .fdl-item .chapter a[href]") != null
+                when {
+                    hasChapterPreview -> manga
+                    !isMangaPageAvailable(manga.url) -> null
+                    else -> manga
+                }
+            }
+        } else {
+            rawMangas
+        }
+
+        // Fallback in case of site markup changes.
+        val finalMangas = filteredMangas.ifEmpty { rawMangas }
+
+        val hasNextPage = document.select(NEXT_PAGE_SELECTOR).isNotEmpty()
+
+        return MangasPage(finalMangas, hasNextPage)
+    }
+
+    private fun isMangaPageAvailable(mangaUrl: String): Boolean = runCatching {
+        client.newCall(GET(baseUrl + mangaUrl, headers)).execute().use { detailsResponse ->
+            if (!detailsResponse.isSuccessful) {
+                false
+            } else {
+                val detailsDocument = detailsResponse.asJsoup()
+                detailsDocument.selectFirst(".notfound-404") == null
+            }
+        }
+    }.getOrDefault(true)
 
     override fun popularMangaNextPageSelector() = NEXT_PAGE_SELECTOR
     override fun latestUpdatesNextPageSelector() = NEXT_PAGE_SELECTOR
@@ -240,7 +291,6 @@ class Mangamob : ParsedHttpSource() {
         private const val RANDOM_FILTER = "Random"
         private const val LATEST_FILTER = "Updated"
         private const val POPULAR_FILTER = "Views"
-        private const val BROKEN_LATEST_SKIP_COUNT = 3
         private val MANGA_ID_REGEX = Regex("""/get/chapters/\?manga_id=(\d+)""")
     }
 }
