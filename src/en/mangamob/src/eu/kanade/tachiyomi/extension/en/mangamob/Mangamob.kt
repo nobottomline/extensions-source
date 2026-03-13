@@ -27,20 +27,6 @@ class Mangamob : ParsedHttpSource() {
 
     override fun getFilterList(): FilterList = getMangamobFilters()
 
-    override fun popularMangaRequest(page: Int): Request = browseRequest(
-        page = page,
-        query = "",
-        sort = POPULAR_FILTER,
-        genres = emptyList(),
-    )
-
-    override fun latestUpdatesRequest(page: Int): Request = browseRequest(
-        page = page,
-        query = "",
-        sort = UPDATED_FILTER,
-        genres = emptyList(),
-    )
-
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         var sort = RANDOM_FILTER
         val genres = mutableListOf<String>()
@@ -81,9 +67,18 @@ class Mangamob : ParsedHttpSource() {
         return GET(url, headers)
     }
 
-    override fun popularMangaSelector() = MANGA_SELECTOR
-    override fun latestUpdatesSelector() = MANGA_SELECTOR
-    override fun searchMangaSelector() = MANGA_SELECTOR
+    override fun popularMangaRequest(page: Int): Request = browseRequest(
+        page = page,
+        query = "",
+        sort = POPULAR_FILTER,
+        genres = emptyList(),
+    )
+
+    override fun latestUpdatesRequest(page: Int): Request = GET(baseUrl, headers)
+
+    override fun popularMangaSelector() = BROWSE_MANGA_SELECTOR
+    override fun latestUpdatesSelector() = LATEST_MANGA_SELECTOR
+    override fun searchMangaSelector() = BROWSE_MANGA_SELECTOR
 
     override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
     override fun latestUpdatesFromElement(element: Element): SManga = searchMangaFromElement(element)
@@ -100,7 +95,7 @@ class Mangamob : ParsedHttpSource() {
     }
 
     override fun popularMangaNextPageSelector() = NEXT_PAGE_SELECTOR
-    override fun latestUpdatesNextPageSelector() = NEXT_PAGE_SELECTOR
+    override fun latestUpdatesNextPageSelector() = null
     override fun searchMangaNextPageSelector() = NEXT_PAGE_SELECTOR
 
     override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
@@ -220,10 +215,11 @@ class Mangamob : ParsedHttpSource() {
 
     companion object {
         private const val ALT_NAME = "Alternative Name:"
-        private const val MANGA_SELECTOR = ".manga_list-sbs .item.item-spc"
+        private const val BROWSE_MANGA_SELECTOR = "#main-wrapper.page-az.page-filter .manga_list-sbs .item.item-spc"
+        private const val LATEST_MANGA_SELECTOR =
+            "#main-content section.block_area.block_area_home:has(h2.cat-heading:contains(Latest Updates)) .manga_list-sbs .item.item-spc"
         private const val NEXT_PAGE_SELECTOR = ".pre-pagination .pagination a[title=Next]"
         private const val RANDOM_FILTER = "Random"
-        private const val UPDATED_FILTER = "Updated"
         private const val POPULAR_FILTER = "Views"
         private val MANGA_ID_REGEX = Regex("""/get/chapters/\?manga_id=(\d+)""")
     }
