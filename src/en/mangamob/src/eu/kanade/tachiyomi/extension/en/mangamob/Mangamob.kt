@@ -12,6 +12,7 @@ import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
+import okhttp3.Request.Builder
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -27,6 +28,7 @@ class Mangamob : ParsedHttpSource() {
         .add("Referer", "$baseUrl/")
 
     override fun getFilterList(): FilterList = getMangamobFilters()
+    private val mangaAvailabilityCache = mutableMapOf<String, Boolean>()
 
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         var sort = RANDOM_FILTER
@@ -134,11 +136,16 @@ class Mangamob : ParsedHttpSource() {
         val rawMangas = parsedItems.map { it.second }
 
         val filteredMangas = if (apply404CheckForMissingPreview) {
+            var reachedUsableEntry = false
             parsedItems.mapNotNull { (element, manga) ->
                 val hasChapterPreview = element.selectFirst(".fd-list .fdl-item .chapter a[href]") != null
                 when {
-                    hasChapterPreview -> manga
-                    !isMangaPageAvailable(manga.url) -> null
+                    hasChapterPreview -> {
+                        reachedUsableEntry = true
+                        manga
+                    }
+                    // Only validate the leading broken segment to keep first page fast.
+                    !reachedUsableEntry && !isMangaPageAvailable(manga.url) -> null
                     else -> manga
                 }
             }
@@ -155,13 +162,20 @@ class Mangamob : ParsedHttpSource() {
     }
 
     private fun isMangaPageAvailable(mangaUrl: String): Boolean = runCatching {
-        client.newCall(GET(baseUrl + mangaUrl, headers)).execute().use { detailsResponse ->
-            if (!detailsResponse.isSuccessful) {
-                false
-            } else {
-                val detailsDocument = detailsResponse.asJsoup()
-                detailsDocument.selectFirst(".notfound-404") == null
+        synchronized(mangaAvailabilityCache) {
+            mangaAvailabilityCache[mangaUrl]
+        } ?: client.newCall(
+            Builder()
+                .url(baseUrl + mangaUrl)
+                .headers(headers)
+                .head()
+                .build(),
+        ).execute().use { detailsResponse ->
+            val isAvailable = detailsResponse.isSuccessful
+            synchronized(mangaAvailabilityCache) {
+                mangaAvailabilityCache[mangaUrl] = isAvailable
             }
+            isAvailable
         }
     }.getOrDefault(true)
 
