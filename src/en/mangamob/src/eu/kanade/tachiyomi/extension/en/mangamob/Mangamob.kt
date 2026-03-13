@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension.en.mangamob
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -74,10 +75,15 @@ class Mangamob : ParsedHttpSource() {
         genres = emptyList(),
     )
 
-    override fun latestUpdatesRequest(page: Int): Request = GET(baseUrl, headers)
+    override fun latestUpdatesRequest(page: Int): Request = browseRequest(
+        page = page,
+        query = "",
+        sort = LATEST_FILTER,
+        genres = emptyList(),
+    )
 
     override fun popularMangaSelector() = BROWSE_MANGA_SELECTOR
-    override fun latestUpdatesSelector() = LATEST_MANGA_SELECTOR
+    override fun latestUpdatesSelector() = BROWSE_MANGA_SELECTOR
     override fun searchMangaSelector() = BROWSE_MANGA_SELECTOR
 
     override fun popularMangaFromElement(element: Element): SManga = searchMangaFromElement(element)
@@ -94,8 +100,22 @@ class Mangamob : ParsedHttpSource() {
             ?: imageElement?.attr("src")
     }
 
+    override fun latestUpdatesParse(response: Response): MangasPage {
+        val document = response.asJsoup()
+        val mangas = document.select(latestUpdatesSelector())
+            .map(::latestUpdatesFromElement)
+            .filterNot { it.title.isBlank() || it.url.isBlank() }
+
+        val isFirstPage = response.request.url.queryParameter("results").isNullOrBlank()
+        val filteredMangas = if (isFirstPage) mangas.drop(BROKEN_LATEST_SKIP_COUNT) else mangas
+
+        val hasNextPage = document.select(latestUpdatesNextPageSelector()).isNotEmpty()
+
+        return MangasPage(filteredMangas, hasNextPage)
+    }
+
     override fun popularMangaNextPageSelector() = NEXT_PAGE_SELECTOR
-    override fun latestUpdatesNextPageSelector() = null
+    override fun latestUpdatesNextPageSelector() = NEXT_PAGE_SELECTOR
     override fun searchMangaNextPageSelector() = NEXT_PAGE_SELECTOR
 
     override fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
@@ -216,11 +236,11 @@ class Mangamob : ParsedHttpSource() {
     companion object {
         private const val ALT_NAME = "Alternative Name:"
         private const val BROWSE_MANGA_SELECTOR = "#main-wrapper.page-az.page-filter .manga_list-sbs .item.item-spc"
-        private const val LATEST_MANGA_SELECTOR =
-            "#main-content section.block_area.block_area_home:has(h2.cat-heading:contains(Latest Updates)) .manga_list-sbs .item.item-spc"
         private const val NEXT_PAGE_SELECTOR = ".pre-pagination .pagination a[title=Next]"
         private const val RANDOM_FILTER = "Random"
+        private const val LATEST_FILTER = "Updated"
         private const val POPULAR_FILTER = "Views"
+        private const val BROKEN_LATEST_SKIP_COUNT = 3
         private val MANGA_ID_REGEX = Regex("""/get/chapters/\?manga_id=(\d+)""")
     }
 }
