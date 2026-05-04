@@ -42,3 +42,53 @@ class Tag(
     val name: String,
     val type: String,
 )
+
+@Serializable
+class ApiGallery(
+    val id: Int,
+    val media_id: String,
+    val title: ApiTitle,
+    val cover: ApiImage,
+    val thumbnail: ApiImage,
+    val scanlator: String = "",
+    val upload_date: Long,
+    val tags: List<ApiTag>,
+    val num_pages: Int,
+    val num_favorites: Long,
+    val pages: List<ApiPage> = emptyList(),
+)
+
+@Serializable
+class ApiTitle(
+    val english: String,
+    val japanese: String? = null,
+    val pretty: String,
+)
+
+@Serializable
+class ApiImage(
+    val path: String,
+    val width: Int,
+    val height: Int,
+)
+
+@Serializable
+class ApiPage(
+    val number: Int,
+    val path: String,
+    val width: Int,
+    val height: Int,
+    val thumbnail: String,
+    val thumbnail_width: Int,
+    val thumbnail_height: Int,
+)
+
+@Serializable
+class ApiTag(
+    val id: Int,
+    val type: String,
+    val name: String,
+    val slug: String,
+    val url: String,
+    val count: Int,
+)

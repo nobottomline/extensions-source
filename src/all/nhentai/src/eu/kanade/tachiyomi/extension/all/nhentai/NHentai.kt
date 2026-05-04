@@ -72,7 +72,10 @@ open class NHentai(
 
     private val shortenTitleRegex = Regex("""(\[[^]]*]|[({][^)}]*[)}])""")
     private val dataRegex = Regex("""JSON\.parse\(\s*"(.*)"\s*\)""")
+    private val galleryIdRegex = Regex("""(?:/g/|/api/v2/galleries/)(\d+)""")
     private val hentaiSelector = "script:containsData(JSON.parse):not(:containsData(media_server)):not(:containsData(avatar_url))"
+    private val imageCdnUrls = (1..4).map { "https://i$it.nhentai.net" }
+    private val thumbCdnUrls = (1..4).map { "https://t$it.nhentai.net" }
     private fun String.shortenTitle() = this.replace(shortenTitleRegex, "").trim()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -183,7 +186,7 @@ open class NHentai(
         }
     }
 
-    private fun searchMangaByIdRequest(id: String) = GET("$baseUrl/g/$id", headers)
+    private fun searchMangaByIdRequest(id: String) = GET("$baseUrl/api/v2/galleries/$id", headers)
 
     private fun searchMangaByIdParse(response: Response, id: String): MangasPage {
         val details = mangaDetailsParse(response)
@@ -208,6 +211,10 @@ open class NHentai(
 
     override fun searchMangaNextPageSelector() = latestUpdatesNextPageSelector()
 
+    override fun mangaDetailsRequest(manga: SManga): Request = apiGalleryRequest(manga.url)
+
+    override fun mangaDetailsParse(response: Response): SManga = response.parseApiGallery().toSManga()
+
     override fun mangaDetailsParse(document: Document): SManga {
         val data = document.getHentaiData()
         val cdnUrl = document.getCdnUrls(thumbnail = true).random()
@@ -230,18 +237,33 @@ open class NHentai(
         }
     }
 
-    override fun chapterListRequest(manga: SManga): Request = GET("$baseUrl${manga.url}", headers)
+    override fun chapterListRequest(manga: SManga): Request = mangaDetailsRequest(manga)
 
     override fun chapterListParse(response: Response): List<SChapter> {
-        val data = response.asJsoup().getHentaiData()
+        val data = response.parseApiGallery()
+        val groups = data.tagNames("group").joinToString(", ").ifBlank { null }
+
         return listOf(
             SChapter.create().apply {
                 name = "Chapter"
-                scanlator = getGroups(data)
+                scanlator = data.scanlator.ifBlank { groups }
                 date_upload = data.upload_date * 1000
-                setUrlWithoutDomain(response.request.url.encodedPath)
+                url = "/api/v2/galleries/${data.id}"
             },
         )
+    }
+
+    override fun pageListRequest(chapter: SChapter): Request = apiGalleryRequest(chapter.url)
+
+    override fun pageListParse(response: Response): List<Page> {
+        val data = response.parseApiGallery()
+
+        return data.pages.mapIndexed { index, page ->
+            Page(
+                index = index,
+                imageUrl = "${imageCdnUrls.random()}/${page.path.removePrefix("/")}",
+            )
+        }
     }
 
     override fun chapterFromElement(element: Element) = throw UnsupportedOperationException()
@@ -314,6 +336,67 @@ open class NHentai(
     class OffsetPageFilter : Filter.Text("Offset results by # pages")
 
     override fun imageUrlParse(document: Document) = throw UnsupportedOperationException()
+
+    private fun apiGalleryRequest(url: String): Request = GET(
+        "$baseUrl/api/v2/galleries/${extractGalleryId(url)}",
+        headers,
+    )
+
+    private fun extractGalleryId(url: String): String = galleryIdRegex.find(url)?.groupValues?.get(1)
+        ?: url.trim('/').substringAfterLast('/')
+
+    private fun Response.parseApiGallery(): ApiGallery = json.decodeFromString(body.string())
+
+    private fun ApiGallery.toSManga(): SManga {
+        val artists = tagNames("artist").joinToString(", ").ifBlank { null }
+        val groups = tagNames("group").joinToString(", ").ifBlank { null }
+        val galleryTitle = title
+
+        return SManga.create().apply {
+            title = if (displayFullTitle) {
+                galleryTitle.english.ifBlank { galleryTitle.japanese ?: galleryTitle.pretty }
+            } else {
+                galleryTitle.pretty.ifBlank { galleryTitle.english }.shortenTitle()
+            }
+            thumbnail_url = "${thumbCdnUrls.random()}/${cover.path.removePrefix("/")}"
+            status = SManga.COMPLETED
+            artist = artists
+            author = groups ?: artists
+            description = buildString {
+                append("Full English and Japanese titles:\n")
+                append(galleryTitle.english)
+                galleryTitle.japanese?.takeIf(String::isNotBlank)?.let {
+                    append('\n')
+                    append(it)
+                }
+                append("\n\n")
+                append("Pages: ${num_pages}\n")
+                append("Favorited by: ${num_favorites}\n")
+
+                tagNames("category").takeIf { it.isNotEmpty() }?.let {
+                    append("Categories: ")
+                    append(it.joinToString())
+                    append('\n')
+                }
+                tagNames("parody").takeIf { it.isNotEmpty() }?.let {
+                    append("Parodies: ")
+                    append(it.joinToString())
+                    append('\n')
+                }
+                tagNames("character").takeIf { it.isNotEmpty() }?.let {
+                    append("Characters: ")
+                    append(it.joinToString())
+                    append("\n\n")
+                }
+            }
+            genre = tagNames("tag").joinToString(", ")
+            update_strategy = UpdateStrategy.ONLY_FETCH_ONCE
+        }
+    }
+
+    private fun ApiGallery.tagNames(type: String): List<String> = tags
+        .filter { it.type == type }
+        .map { it.name }
 
     private class FavoriteFilter : Filter.CheckBox("Show favorites only", false)
 
